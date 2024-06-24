@@ -16,6 +16,7 @@ import (
 // ParseJavaObject parses a serialized java object.
 func ParseJavaObject(buf []byte) (interface{}, error) {
 	jop := NewJavaObjectParser(bytes.NewReader(buf))
+	jop.SetMaxDataBlockSize(len(buf))
 	return jop.ParseJavaObject()
 }
 
