@@ -21,11 +21,11 @@ func ParseJavaObject(buf []byte) (interface{}, error) {
 
 // NewJavaObjectParser reads serialized java objects from stream.
 func NewJavaObjectParser(rd io.Reader) *JavaObjectParser {
-	buf := bufio.NewReaderSize(rd, defaultBufferSize)
+	buf := bufio.NewReaderSize(rd, minBufferSize)
 
 	jop := &JavaObjectParser{
 		rd:                  buf,
-		maxDataBlockSize:    defaultBufferSize,
+		maxDataBlockSize:    buf.Size(),
 		cycleReferenceValue: defaultCycleReferenceValue,
 	}
 
@@ -33,7 +33,7 @@ func NewJavaObjectParser(rd io.Reader) *JavaObjectParser {
 }
 
 // SetMaxDataBlockSize set the maximum size of the parsed data block,
-// by default it is 1024.
+// by default it is equal to the buffer size.
 func (jop *JavaObjectParser) SetMaxDataBlockSize(maxDataBlockSize int) {
 	jop.maxDataBlockSize = maxDataBlockSize
 }
@@ -73,7 +73,7 @@ const magicNumber uint16 = 0xACED
 const protocolVersion uint16 = 5
 const objectValueField string = "@@value@@"
 const defaultCycleReferenceValue = "[CYCLE]"
-const defaultBufferSize int = 1024
+const minBufferSize int = 1024
 const typeCodeMask uint8 = 0x70
 const endBlock endBlockT = "endBlock"
 const objectDataMinLength int = 4
@@ -351,8 +351,9 @@ func (jop *JavaObjectParser) readString(cnt int, asHex bool) (s string, err erro
 
 	// Prevented to allocate an extremely large block of memory.
 	if cnt > jop.maxDataBlockSize {
-		err = errors.Errorf("block data exceeds size of reader buffer. " +
-			"To increase the size, use the method SetMaxDataBlockSize or use bufio.Reader with a larger buffer size")
+		err = errors.Errorf("block data size (%d) exceeds reader buffer size (%d). "+
+			"To increase the size, use the method SetMaxDataBlockSize or use bufio.Reader with a larger buffer size",
+			cnt, jop.maxDataBlockSize)
 		return
 	}
 

@@ -13,7 +13,8 @@ func main() {
 	javaObjectBase64 := "rO0ABXQADEhlbGxvLCBXb3JsZA=="
 	javaObjectBytes, err := base64.StdEncoding.DecodeString(javaObjectBase64)
 	if err != nil {
-		panic(err)
+		fmt.Printf("error decoding base64: %s\n", err.Error())
+		return
 	}
 
 	var obj interface{}
@@ -21,7 +22,8 @@ func main() {
 	// Usage with []byte
 	obj, err = java2json.ParseJavaObject(javaObjectBytes)
 	if err != nil {
-		panic(err)
+		fmt.Printf("error parsing java object: %s\n", err.Error())
+		return
 	}
 
 	printJson(obj)
@@ -35,7 +37,8 @@ func main() {
 
 	obj, err = jop.ParseJavaObject()
 	if err != nil {
-		panic(err)
+		fmt.Printf("error parsing java object: %s\n", err.Error())
+		return
 	}
 
 	printJson(obj)
@@ -44,7 +47,8 @@ func main() {
 func printJson(obj interface{}) {
 	bytes, err := json.Marshal(obj)
 	if err != nil {
-		panic(err)
+		fmt.Printf("error marshalling JSON: %s\n", err.Error())
+		return
 	}
 	fmt.Println(string(bytes))
 }
