@@ -24,17 +24,24 @@ func NewJavaObjectParser(rd io.Reader) *JavaObjectParser {
 	buf := bufio.NewReaderSize(rd, defaultBufferSize)
 
 	jop := &JavaObjectParser{
-		rd:               buf,
-		maxDataBlockSize: buf.Size(),
+		rd:                  buf,
+		maxDataBlockSize:    defaultBufferSize,
+		cycleReferenceValue: defaultCycleReferenceValue,
 	}
 
 	return jop
 }
 
 // SetMaxDataBlockSize set the maximum size of the parsed data block,
-// by default it is equal to the value of the buffer size bufio.Reader or size of bytes.Reader.
+// by default it is 1024.
 func (jop *JavaObjectParser) SetMaxDataBlockSize(maxDataBlockSize int) {
 	jop.maxDataBlockSize = maxDataBlockSize
+}
+
+// SetCycleReferenceValue set the cycle reference value,
+// by default it is "[CYCLE]".
+func (jop *JavaObjectParser) SetCycleReferenceValue(cycleReferenceValue string) {
+	jop.cycleReferenceValue = cycleReferenceValue
 }
 
 // ParseSerializedObject parses a serialized java object from stream.
@@ -65,7 +72,7 @@ func (jop *JavaObjectParser) ParseJavaObject() (content interface{}, err error) 
 const magicNumber uint16 = 0xACED
 const protocolVersion uint16 = 5
 const objectValueField string = "@@value@@"
-const cycleValue = "[CYCLE]"
+const defaultCycleReferenceValue = "[CYCLE]"
 const defaultBufferSize int = 1024
 const typeCodeMask uint8 = 0x70
 const endBlock endBlockT = "endBlock"
@@ -79,6 +86,12 @@ const scSerializableWithoutWriteMethod uint8 = 0x02
 const scSerializableWithWriteMethod uint8 = 0x03
 const scExternalizeWithBlockData uint8 = 0x04
 const scExternalizeWithoutBlockData uint8 = 0x0c
+const serLocalDateType byte = 3
+const serLocalTimeType byte = 4
+const serLocalDateTimeType byte = 5
+const serLocalDateBlockSize int = 7
+const serLocalTimeBlockSize int = 7
+const serLocalDateTimeBlockSize int = 14
 
 // typeNames includes all known type names.
 var typeNames = []string{
@@ -134,6 +147,7 @@ var knownPostProcs = map[string]postProc{
 	"java.util.Arrays$ArrayList@d9a43cbecd8806d2":                arraysArrayListPostProc,
 	"java.util.concurrent.CopyOnWriteArrayList@785d9fd546ab90c3": listPostProc,
 	"java.util.CollSer@578eabb63a1ba811":                         listPostProc,
+	"java.time.Ser@955d84ba1b2248b2":                             serPostProc,
 }
 
 // primitiveHandler are used to read primitive values.
@@ -142,10 +156,11 @@ type primitiveHandler func(jop *JavaObjectParser) (interface{}, error)
 // JavaObjectParser reads serialized java objects
 // see: https://docs.oracle.com/javase/8/docs/platform/serialization/spec/protocol.html
 type JavaObjectParser struct {
-	buf              bytes.Buffer
-	rd               *bufio.Reader
-	handles          []interface{}
-	maxDataBlockSize int
+	buf                 bytes.Buffer
+	rd                  *bufio.Reader
+	handles             []interface{}
+	maxDataBlockSize    int
+	cycleReferenceValue string
 }
 
 // clazz contains java class info.
@@ -650,7 +665,7 @@ func parseReference(jop *JavaObjectParser) (ref interface{}, err error) {
 	if i > -1 && i < len(jop.handles) {
 		ref = jop.handles[i]
 		if ref == nil {
-			ref = cycleValue
+			ref = jop.cycleReferenceValue
 		}
 	}
 
@@ -1070,5 +1085,68 @@ func calendarPostProc(fields map[string]interface{}, data []interface{}) (map[st
 // arraysArrayListPostProc populates the object value with "a" field.
 func arraysArrayListPostProc(fields map[string]interface{}, data []interface{}) (map[string]interface{}, error) {
 	fields[objectValueField] = fields["a"]
+	return fields, nil
+}
+
+// serPostProc populates the object value with a time.Time.
+func serPostProc(fields map[string]interface{}, data []interface{}) (map[string]interface{}, error) {
+	if len(data) < 1 {
+		return nil, errors.New("invalid data: at least one element required")
+	}
+
+	b, isByteSlice := data[0].([]byte)
+	if !isByteSlice {
+		return nil, errors.New("unexpected data at position 0")
+	}
+
+	switch b[0] {
+	case serLocalDateType:
+		if len(b) < serLocalDateBlockSize {
+			return nil, errors.Errorf("incorrect data at position 0: wanted %d bytes, got %d", serLocalDateBlockSize, len(b))
+		}
+
+		var year uint32
+		var month, day uint8
+
+		binary.Read(bytes.NewReader(b[1:5]), binary.BigEndian, &year)
+		binary.Read(bytes.NewReader(b[5:6]), binary.BigEndian, &month)
+		binary.Read(bytes.NewReader(b[6:7]), binary.BigEndian, &day)
+
+		fields[objectValueField] = time.Date(int(year), time.Month(int(month)), int(day), 0, 0, 0, 0, time.Local)
+	case serLocalTimeType:
+		if len(b) < serLocalTimeBlockSize {
+			return nil, errors.Errorf("incorrect data at position 0: wanted %d bytes, got %d", serLocalTimeBlockSize, len(b))
+		}
+
+		var hour, min, sec uint8
+		var nsec uint32
+
+		binary.Read(bytes.NewReader(b[1:2]), binary.BigEndian, &hour)
+		binary.Read(bytes.NewReader(b[2:3]), binary.BigEndian, &min)
+		binary.Read(bytes.NewReader(b[3:4]), binary.BigEndian, &sec)
+		binary.Read(bytes.NewReader(b[4:8]), binary.BigEndian, &nsec)
+
+		fields[objectValueField] = time.Date(0, time.Month(1), 1, int(hour), int(min), int(sec), int(nsec), time.Local)
+	case serLocalDateTimeType:
+		if len(b) < serLocalDateTimeBlockSize {
+			return nil, errors.Errorf("incorrect data at position 0: wanted %d bytes, got %d", serLocalDateTimeBlockSize, len(b))
+		}
+
+		var year uint32
+		var month, day uint8
+		var hour, min, sec uint8
+		var nsec uint32
+
+		binary.Read(bytes.NewReader(b[1:5]), binary.BigEndian, &year)
+		binary.Read(bytes.NewReader(b[5:6]), binary.BigEndian, &month)
+		binary.Read(bytes.NewReader(b[6:7]), binary.BigEndian, &day)
+		binary.Read(bytes.NewReader(b[7:8]), binary.BigEndian, &hour)
+		binary.Read(bytes.NewReader(b[8:9]), binary.BigEndian, &min)
+		binary.Read(bytes.NewReader(b[9:10]), binary.BigEndian, &sec)
+		binary.Read(bytes.NewReader(b[10:14]), binary.BigEndian, &nsec)
+
+		fields[objectValueField] = time.Date(int(year), time.Month(int(month)), int(day), int(hour), int(min), int(sec), int(nsec), time.Local)
+	}
+
 	return fields, nil
 }

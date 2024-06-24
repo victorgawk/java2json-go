@@ -30,7 +30,8 @@ func main() {
 	reader := bytes.NewReader(javaObjectBytes)
 	jop := java2json.NewJavaObjectParser(reader)
 
-	jop.SetMaxDataBlockSize(1024) // (optional) set max data block size
+	jop.SetMaxDataBlockSize(2048)                 // (optional) set max data block size
+	jop.SetCycleReferenceValue("cycle reference") // (optional) set cycle reference value
 
 	obj, err = jop.ParseJavaObject()
 	if err != nil {
